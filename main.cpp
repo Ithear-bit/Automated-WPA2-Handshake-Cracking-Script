@@ -101,11 +101,11 @@ void Deistvie(int dei){
             
             std::system("sudo airmon-ng stop wlan0mon");
             std::system("sudo systemctl restart NetworkManager");
-            std::printf("пожалуйста введите имя файла: ");
+            std::printf("пожалуйста введите путь к файлу: ");
             std::string name_for_file_cap = "";
             std::cin >> name_for_file_cap;
             std::cout << std::endl;
-            std::string coma = "hcxpcapngtool -o output.22000 /home/arlekin/gamingtest/"+ name_for_file_cap +".cap";
+            std::string coma = "hcxpcapngtool -o output.22000 "+ name_for_file_cap +".cap";
             int hash = std::system(coma.c_str());
             if (hash == 0){
                 printf("победа, файл, преобразован и ждёт отправки на сервер\n");
@@ -181,7 +181,7 @@ void Deistvie(int dei){
 int main() {
      std::signal(SIGINT, signalHandler);
     std::cout << Green << "=============================================" << white << std::endl; 
-    std::cout << Red << "выбирите действие:" << white << std::endl;
+    std::cout << Red << "выбирите действие: " << white << std::endl;
     std::cout << blue << "1 перехватить пакет" << white << std::endl;
     std::cout << blue << "2 перевести в нужный формат для hashcat" << white << std::endl;
     std::cout << CYAN << "3 отправить на сервер и начать подбор"<< RESET << std::endl;
